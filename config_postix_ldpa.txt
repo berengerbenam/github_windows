@@ -1,0 +1,432 @@
+###### INSTALLATION
+yum install postfix-ldap
+
+###CREATION LDIF pour le mailing
+
+vim msg.ldif
+
+##LE CONTENU
+dn: cn=msg,cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: msg
+olcAttributeTypes: (1.3.6.1.4.1.8869.2.3.1 NAME 'mailEnabled'
+    DESC 'Mailbox Enabled'
+    EQUALITY booleanMatch
+    SYNTAX 1.3.6.1.4.1.1466.115.121.1.7 SINGLE-VALUE)
+olcAttributeTypes: (1.3.6.1.4.1.8869.2.3.2 NAME 'mailQuota'
+        DESC 'defines how much mail quota is available for the user'
+        EQUALITY caseIgnoreMatch
+        SUBSTR caseIgnoreSubstringsMatch
+        SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE)
+olcAttributeTypes: (1.3.6.1.4.1.8869.2.3.3 NAME 'mailGroup'
+        DESC 'RFC1274: RFC822 Mailbox'
+        EQUALITY caseIgnoreIA5Match
+        SUBSTR caseIgnoreIA5SubstringsMatch
+        SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{256})
+olcObjectClasses: ( 1.3.6.1.4.1.8869.2.4.1 NAME 'mailExtension'
+        DESC 'More Mail Options'
+        SUP top AUXILIARY
+        MUST ( cn  )
+        MAY ( mailEnabled $ mailQuota )
+        )
+olcObjectClasses: ( 1.3.6.1.4.1.8869.2.4.2 NAME 'groupMail'
+        DESC 'Group mail address'
+        SUP top AUXILIARY
+        MUST ( cn  )
+        MAY ( mailGroup )
+        )
+
+### MISE A JOUR DE LA BASE
+ldapadd -Y EXTERNAL -H ldapi:/// -f msg.ldif
+
+### Ajout des utilisateurs
+
+###USER 1
+vim user1.ldif
+
+dn: uid=lala,ou=utilisateurs,dc=ayounux,dc=sn
+objectClass: top
+objectClass: posixAccount
+objectClass: shadowAccount
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: mailExtension
+homeDirectory: /home/lala
+loginShell: /bin/bash
+uidNumber: 1000
+gidNumber: 1000
+uid: lala
+sn: lala
+givenName: lala
+cn: lala
+displayName: lala
+userPassword: {SSHA}
+mail: lala@ayounux.sn
+mailEnabled: TRUE
+mailQuota: 2G
+
+
+###USER 2
+vim user2.ldif
+
+dn: uid=fifi,ou=utilisateurs,dc=ayounux,dc=sn
+objectClass: top
+objectClass: posixAccount
+objectClass: shadowAccount
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: mailExtension
+homeDirectory: /home/fifi
+loginShell: /bin/bash
+uidNumber: 10001
+gidNumber: 10001
+uid: fifi
+sn: fifi
+givenName: fifi
+cn: fifi
+displayName: fifi
+userPassword: {SSHA}
+mail: fifi@ayounux.sn
+mailEnabled: TRUE
+mailQuota: 2G
+
+
+### MISE A JOUR DE LA BASE
+ldapadd -x -W -D "cn=admin,dc=ayounux,dc=sn" -f user1.ldif
+ldapadd -x -W -D "cn=admin,dc=ayounux,dc=sn" -f user2.ldif
+
+### CONFIG MAIL VIRTUEL
+
+mkdir /usr/local/vmail
+chmod 700 /usr/local/vmail
+groupadd --gid 5000 vmail
+useradd -g vmail -u 5000 vmail -d /home/vmail -m
+chown vmail: /home/vmail -R
+chown vmail: /usr/local/vmail -R
+chown vmail:vmail /home/vmail
+
+##### CONFIG LIAISON POSTFIX LDAP
+
+vim /etc/postfix/sender_login_maps.cf
+
+#CONTENU
+server_host      = 192.168.1.1
+server_port 	 = 389
+bind             = yes
+start_tls        = no
+version          = 3
+bind_dn          = cn=admin,dc=ayounux,dc=sn
+bind_pw          = ghepie1A
+search_base      = dc=ayounux,dc=sn
+scope            = sub
+query_filter     = (&(mail=%s)(objectClass=person)(mailEnabled=TRUE))
+result_attribute = mail
+
+
+
+vim /etc/postfix/virtual_group_maps.cf
+
+#CONTENU
+server_host              = 192.168.1.1
+server_port    		 = 389
+bind                     = yes
+start_tls                = no
+version                  = 3
+bind_dn                  = cn=admin,dc=ayounux,dc=sn
+bind_pw                  = ghepie1A
+search_base              = dc=ayounux,dc=sn
+scope                    = sub
+query_filter             = (&(objectClass=groupOfNames)(mailGroup=%s))
+leaf_result_attribute    = mail
+special_result_attribute = member
+result_attribute         = mail
+debuglevel               = 0
+
+
+
+vim /etc/postfix/virtual_forward_maps.cf
+
+#CONTENU
+server_host      = 192.168.1.1
+server_port = 389
+bind             = yes
+start_tls        = no
+version          = 3
+bind_dn          = cn=admin,dc=ayounux,dc=sn
+bind_pw          = ghepie1A
+search_base      = dc=ayounux,dc=sn
+scope            = sub
+query_filter     = (&(mail=%s)(mailGroup=*)(mailEnabled=TRUE)(objectClass=person))
+result_attribute = mailGroup
+debuglevel       = 0
+
+
+
+vim /etc/postfix/transport
+on écrit dans le fichier
+
+
+ayounux.sn dovecot
+
+
+
+si on a plusieurs domain au cas contraire on saute comme dans mon cas
+
+vim /etc/postfix/virtual_mailbox_maps.cf 
+
+#CONTENU
+server_host      = 192.168.1.1
+server_port      = 389
+bind             = yes
+start_tls        = no
+version          = 3
+bind_dn          = cn=admin,dc=ayounux,dc=sn
+bind_pw          = ghepie1A
+search_base      = dc=ayounux,dc=sn
+scope            = sub
+query_filter     = (&(mail=%s)(objectClass=person))
+result_attribute = mail
+result_format    = /home/vmail/%d/%u/mailbox/
+debuglevel       = 0
+
+
+
+
+vim /etc/postfix/main.cf
+
+commenter: ou il y'a smtp, mydestination, html_directory, readme_directory
+
+ajouter à la fin du fichier
+
+#CONTENU
+
+mydestination = $myhostname localhost
+disable_vrfy_command = yes
+smtpd_helo_required = yes
+smtpd_sasl_type=dovecot
+smtpd_sasl_path=private/auth_dovecot
+smtpd_sasl_auth_enable = yes
+smtpd_sasl_authenticated_header = yes
+broken_sasl_auth_clients = yes
+proxy_read_maps = $local_recipient_maps $mydestination $virtual_alias_maps $virtual_alias_domains $virtual_mailbox_maps $virtual_mailbox_domains $relay_recipient_maps $relay_domains $canonical_maps $sender_canonical_maps $recipient_canonical_maps $relocated_maps $transport_maps $mynetworks $smtpd_sender_login_maps
+smtpd_sender_restrictions = reject_authenticated_sender_login_mismatch, reject_unknown_sender_domain, permit_sasl_authenticated
+smtpd_recipient_restrictions = permit_sasl_authenticated, permit_mynetworks, reject_rbl_client zen.spamhaus.org, reject_unauth_destination, reject_unknown_reverse_client_hostname,
+smtpd_banner = $myhostname ESMTP
+biff = no
+append_dot_mydomain = no
+readme_directory = /usr/share/doc/postfix
+smtpd_sasl_security_options = noanonymous
+smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+disable_vrfy_command = yes
+smtpd_helo_required = yes
+smtpd_data_restrictions = reject_unauth_pipelining, permit
+virtual_mailbox_base = /home/vmail/
+virtual_alias_domains =
+virtual_minimum_uid = 104
+virtual_uid_maps = static:5000
+virtual_gid_maps = static:5000
+virtual_transport = dovecot
+html_directory = /usr/share/doc/postfix/html
+relayhost =
+sender_bcc_maps =
+recipient_bcc_maps =
+relay_domains =
+relay_recipient_maps =
+smtpd_sasl_local_domain = $mydomain
+virtual_mailbox_domains = $mydomain
+smtpd_sender_login_maps = ldap:/etc/postfix/sender_login_maps.cf
+virtual_mailbox_maps = ldap:/etc/postfix/virtual_mailbox_maps.cf
+virtual_alias_maps = ldap:/etc/postfix/virtual_group_maps.cf ldap:/etc/postfix/virtual_forward_maps.cf
+dovecot_destination_recipient_limit=1
+transport_maps = hash:/etc/postfix/transport
+local_recipient_maps = $virtual_mailbox_maps
+
+
+mv /etc/postfix/master.cf /home/ayounux/Documents
+
+vim /etc/postfix/master.cf
+
+ajouter
+
+##CONTENU
+
+smtp      inet  n       -       -       -       -       smtpd
+submission inet n       -       -       -       -       smtpd
+  -o smtpd_enforce_tls=yes
+  -o smtpd_tls_security_level=encrypt
+  -o tls_preempt_cipherlist=yes
+pickup    fifo  n       -       -       60      1       pickup
+cleanup   unix  n       -       -       -       0       cleanup
+qmgr      fifo  n       -       n       300     1       qmgr
+tlsmgr    unix  -       -       -       1000?   1       tlsmgr
+rewrite   unix  -       -       -       -       -       trivial-rewrite
+bounce    unix  -       -       -       -       0       bounce
+defer     unix  -       -       -       -       0       bounce
+trace     unix  -       -       -       -       0       bounce
+verify    unix  -       -       -       -       1       verify
+flush     unix  n       -       -       1000?   0       flush
+proxymap  unix  -       -       n       -       -       proxymap
+proxywrite unix -       -       n       -       1       proxymap
+smtp      unix  -       -       -       -       -       smtp
+relay     unix  -       -       -       -       -       smtp
+showq     unix  n       -       -       -       -       showq
+error     unix  -       -       -       -       -       error
+retry     unix  -       -       -       -       -       error
+discard   unix  -       -       -       -       -       discard
+local     unix  -       n       n       -       -       local
+virtual   unix  -       n       n       -       -       virtual
+lmtp      unix  -       -       -       -       -       lmtp
+anvil     unix  -       -       -       -       1       anvil
+scache    unix  -       -       -       -       1       scache
+maildrop  unix  -       n       n       -       -       pipe
+  flags=DRhu user=vmail argv=/usr/bin/maildrop -d ${recipient}
+uucp      unix  -       n       n       -       -       pipe
+  flags=Fqhu user=uucp argv=uux -r -n -z -a$sender - $nexthop!rmail ($recipient)
+ifmail    unix  -       n       n       -       -       pipe
+  flags=F user=ftn argv=/usr/lib/ifmail/ifmail -r $nexthop ($recipient)
+bsmtp     unix  -       n       n       -       -       pipe
+  flags=Fq. user=bsmtp argv=/usr/lib/bsmtp/bsmtp -t$nexthop -f$sender $recipient
+scalemail-backend unix  -   n   n   -   2   pipe
+  flags=R user=scalemail argv=/usr/lib/scalemail/bin/scalemail-store ${nexthop} ${user} ${extension}
+mailman   unix  -       n       n       -       -       pipe
+  flags=FR user=list argv=/usr/lib/mailman/bin/postfix-to-mailman.py
+  ${nexthop} ${user}
+dovecot   unix  -       n       n       -       -       pipe
+#  flags=DRhu user=vmail:vmail argv=/usr/lib/dovecot/deliver -d ${recipient}
+   flags=DRhu user=vmail:vmail argv=/usr/libexec/dovecot/deliver -d ${recipient}
+
+
+
+
+
+
+postmap -q fifi@ayounux.sn ldap:/etc/postfix/sender_login_maps.cf
+
+service postfix restart
+
+
+
+############# DOVECOT
+
+vim /etc/dovecot/dovecot.conf
+
+
+auth_mechanisms = plain login
+mail_uid = vmail
+mail_gid = vmail
+login_log_format_elements = "user=<%u> method=%m rip=%r lip=%l mpid=%e %c %k"
+mail_plugins = quota
+log_timestamp = "%Y-%m-%d %H:%M:%S "
+protocols = imap
+listen = *
+auth_cache_size = 50000
+auth_cache_ttl = 300s
+auth_cache_negative_ttl = 30s
+
+userdb {
+  args = /etc/dovecot/dovecot-ldap-user.conf.ext
+  driver = ldap
+}
+passdb {
+  args = /etc/dovecot/dovecot-ldap-pass.conf.ext
+  driver = ldap
+}
+
+service auth {
+  unix_listener /var/spool/postfix/private/auth_dovecot {
+    group = postfix
+mode = 0660
+    user = postfix
+  }
+  unix_listener auth-userdb {
+    mode = 0600
+    user = vmail
+  }
+  user = root
+}
+
+service dict {
+    unix_listener dict {
+        mode = 0660
+        user = vmail
+        group = vmail
+    }
+}
+
+namespace inbox {
+  inbox = yes
+  location =
+separator = /
+  mailbox Drafts {
+    auto = subscribe
+    special_use = \Drafts
+  }
+  mailbox Junk {
+    auto = subscribe
+    special_use = \Junk
+  }
+  mailbox Sent {
+    auto = subscribe
+    special_use = \Sent
+  }
+  mailbox Trash {
+    auto = subscribe
+    special_use = \Trash
+  }
+  prefix =
+}
+
+protocol imap {
+  mail_plugins = quota imap_quota
+}
+
+plugin {
+  quota = maildir:User quota
+}
+
+
+
+
+vim /etc/dovecot/dovecot-ldap-user.conf.ext
+
+#CONTENU
+hosts = 192.168.1.1
+dn = cn=admin,dc=ayounux,dc=sn
+dnpass = ghepie1A
+debug_level = 0
+auth_bind = no
+ldap_version = 3
+base = dc=ayounux,dc=sn
+scope = subtree
+user_attrs = \
+  =quota_rule=*:bytes=%{ldap:mailQuota}, \
+  =home=/home/vmail/%d/%{ldap:uid}, \
+  =mail=maildir:/home/vmail/%d/%{ldap:uid}/mailbox
+user_filter = (&(mail=%u)(objectClass=person)(mailEnabled=TRUE))
+iterate_attrs        = mail=user
+iterate_filter       = (objectClass=person)
+
+
+
+vim /etc/dovecot/dovecot-ldap-pass.conf.ext
+
+#CONTENU
+hosts  = 192.168.1.1
+dn = cn=admin,dc=ayounux,dc=sn
+dnpass = ghepie1A
+debug_level = 0
+auth_bind = no
+ldap_version = 3
+base = dc=ayounux,dc=sn
+scope = subtree
+
+pass_attrs = mail=user,userPassword=password
+pass_filter = (&(mail=%u)(objectClass=person)(mailEnabled=TRUE))
+default_pass_scheme = CRYPT
+
+
+#HASH
+postmap hash:/etc/postfix/transport
